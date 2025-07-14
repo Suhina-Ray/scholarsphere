@@ -181,3 +181,5 @@ async def send_pdf(request: Request):
     generate_pdf(student.name, top10)
     send_email_with_pdf(email, student.name, "student_scholarships.pdf")
     return {"message": f"PDF sent to {email}"}
+
+
