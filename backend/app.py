@@ -1,11 +1,17 @@
+import os
+import csv
+from typing import List, Dict, Any
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
-import csv
 from fpdf import FPDF
 import smtplib
 from email.message import EmailMessage
-import os
-from typing import List, Dict, Any
+
+# --- PATH SETUP ---
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_DIR = os.path.join(BASE_DIR, "database")
+STUDENTS_CSV = os.path.join(DB_DIR, "students.csv")
+SCHOLARSHIPS_CSV = os.path.join(DB_DIR, "scholarships.csv")
 
 # --- CONFIG ---
 SENDER_EMAIL = "iammdnaumanatharhasan@gmail.com"
@@ -23,17 +29,15 @@ class Student:
         self.phone = data.get("phone", "")
         self.category = data.get("category", "").lower()
         self.field_of_study = data.get("field_of_study", "").lower()
-
         self.year_of_graduation = int(data.get("year_of_graduation", 0))
         self.current_semester = int(data.get("current_semester", 0))
         self.college_name = data.get("college_name", "")
         self.cgpa = float(data.get("cgpa", 0))
         self.family_income = int(data.get("family_income", 0))
         self.last_year_cgpa = float(data.get("last_year_cgpa", 0))
-
-        self.army_background = self._convert_to_bool(data.get("army_background", False))
-        self.disability_status = self._convert_to_bool(data.get("disability_status", False))
-        self.minority_status = self._convert_to_bool(data.get("minority_status", False))
+        self.army_background = self._convert_to_bool(data.get("army_background"))
+        self.disability_status = self._convert_to_bool(data.get("disability_status"))
+        self.minority_status = self._convert_to_bool(data.get("minority_status"))
 
     def _convert_to_bool(self, value):
         if isinstance(value, bool):
@@ -45,18 +49,14 @@ class Student:
     def match_score(self, scholarship: dict) -> int:
         score = 0
         try:
-            min_gpa = float(scholarship.get("Minimum GPA", 0))
-            if self.cgpa >= min_gpa:
+            if self.cgpa >= float(scholarship.get("Minimum GPA", 0)):
                 score += 3
-        except:
-            pass
+        except: pass
 
         try:
-            max_income = int(scholarship.get("Maximum Family Income", 1e9))
-            if self.family_income <= max_income:
+            if self.family_income <= int(scholarship.get("Maximum Family Income", 1e9)):
                 score += 3
-        except:
-            pass
+        except: pass
 
         field = scholarship.get("Field of Study", "").lower()
         if self.field_of_study == field or field == "any":
@@ -66,28 +66,34 @@ class Student:
         if self.category in category:
             score += 1
 
-        if self.minority_status and scholarship.get("Special Categories", "").lower().find("minority") != -1:
+        if self.minority_status and "minority" in category:
             score += 1
-        if self.disability_status and scholarship.get("Special Categories", "").lower().find("disability") != -1:
+        if self.disability_status and "disability" in category:
             score += 1
-        if self.army_background and scholarship.get("Special Categories", "").lower().find("army") != -1:
+        if self.army_background and "army" in category:
             score += 1
 
         return score
 
 # --- UTILITY FUNCTIONS ---
 def save_student(data: dict) -> None:
-    file_exists = os.path.isfile("/Users/cix9ine/Python/Projects/scholarsphere/database/students.csv")
-    with open("/Users/cix9ine/Python/Projects/scholarsphere/database/students.csv", "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=data.keys())
+    file_exists = os.path.isfile(STUDENTS_CSV)
+    with open(STUDENTS_CSV, "a", newline="", encoding="utf-8") as f:
+        fieldnames = [
+            "name", "dob", "gender", "email", "phone", "category", "field_of_study",
+            "year_of_graduation", "current_semester", "college_name", "cgpa",
+            "family_income", "last_year_cgpa", "army_background",
+            "disability_status", "minority_status"
+        ]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
-        writer.writerow(data)
+        writer.writerow({key: data.get(key, "") for key in fieldnames})
 
 def load_scholarships() -> List[Dict[str, Any]]:
-    if not os.path.exists("/Users/cix9ine/Python/Projects/scholarsphere/database/scholarships.csv"):
+    if not os.path.exists(SCHOLARSHIPS_CSV):
         return []
-    with open("/Users/cix9ine/Python/Projects/scholarsphere/database/scholarships.csv", newline="", encoding="utf-8") as f:
+    with open(SCHOLARSHIPS_CSV, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 def generate_pdf(student_name: str, scholarships: List[Dict[str, Any]], output_path: str = "student_scholarships.pdf") -> None:
@@ -104,7 +110,6 @@ def generate_pdf(student_name: str, scholarships: List[Dict[str, Any]], output_p
         for i, sch in enumerate(scholarships, 1):
             pdf.set_font("Arial", "B", size=12)
             pdf.cell(200, 10, f"{i}. {sch.get('Title', 'N/A')}", ln=True)
-
             pdf.set_font("Arial", size=10)
             pdf.multi_cell(0, 6, f"Description: {sch.get('Description', '')}")
             pdf.cell(0, 6, f"Amount: {sch.get('Amount', 'N/A')}", ln=True)
@@ -116,7 +121,7 @@ def generate_pdf(student_name: str, scholarships: List[Dict[str, Any]], output_p
 
 def send_email_with_pdf(recipient_email: str, student_name: str, pdf_path: str) -> None:
     subject = "Your Top Scholarship Matches"
-    body = f"""Hi {student_name},\n\nAttached is your personalized list of scholarship recommendations.\n\nBest,\nScholarSphere Team"""
+    body = f"Hi {student_name},\n\nAttached is your personalized list of scholarship recommendations.\n\nBest,\nScholarSphere Team"
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -126,12 +131,7 @@ def send_email_with_pdf(recipient_email: str, student_name: str, pdf_path: str) 
 
     if os.path.exists(pdf_path):
         with open(pdf_path, "rb") as f:
-            msg.add_attachment(
-                f.read(),
-                maintype="application",
-                subtype="pdf",
-                filename=f"{student_name}_scholarships.pdf"
-            )
+            msg.add_attachment(f.read(), maintype="application", subtype="pdf", filename=f"{student_name}_scholarships.pdf")
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
         smtp.login(SENDER_EMAIL, SENDER_PASSWORD)
